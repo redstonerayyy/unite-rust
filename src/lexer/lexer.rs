@@ -11,10 +11,27 @@ pub enum LexerError {
     MissingExpectedSymbol {
         expected: TokenType,
         found: Token
+    },
+
+    #[error("Can't find opening symbol for {symbol:?}")]
+    MisbalancedSymbol {
+        symbol: char,
+        open: char
+    },
+
+    #[error("Unkwon Symbol")]
+    UnknownSymbol {
+        symbol: String,
     }
 }
 
 pub type Token = TokenType;
+
+// pub struct Punctuation {
+//     pub raw: char,
+//     pub kind: PunctuationKind
+// }
+
 
 #[derive(Debug)]
 pub enum TokenType {
@@ -77,32 +94,86 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn push_balance(&mut self, c: &char) -> BalancingDepthType {
+    fn map_balance(c: &char) -> char {
+        match c {
+            '}' => '{',
+            '{' => '}',
+            ']' => '[',
+            '[' => ']',
+            ')' => '(',
+            '(' => ')',
+            _ => panic!("balancing panic")
+        }
+    }
+
+    fn push_symbol(&mut self, c: &char) -> BalancingDepthType {
         if let Some(v) = self.balancing_state.get_mut(&c) {
             *v += 1;
-            *v
+            *v - 1
         } else {
-            self.balancing_state.insert(*c, 0);
+            self.balancing_state.insert(*c, 1);
             0
         }
     }
 
-    fn pop_balance(&mut self, c: &char) -> BalancingDepthType {
-        if let Some(v) = self.balancing_state.get_mut(&c) {
-            if *v == 1 {
+    fn pop_symbol(&mut self, c: &char) -> Result<BalancingDepthType, LexerError> {
+        if let Some(v) = self.balancing_state.get_mut(&Lexer::map_balance(&c)) {
+            if *v >= 1 {
                 *v -= 1;
-                *v
+                Ok(*v)
+            } else {
+                Err(LexerError::MisbalancedSymbol{ symbol: *c, open: Lexer::map_balance(&c)})
             }
         } else {
-            self.balancing_state.insert(*c, 0);
-            0
+            Err(LexerError::MisbalancedSymbol{ symbol: *c, open: Lexer::map_balance(&c)})
         }
     }
 
-    pub fn transform_to_type(&mut self,c: char) -> Option<TokenType> {
+    fn parse_number(&mut self, start: char) -> Result<TokenType, LexerError> {
+        
+    }
+
+    fn transform_to_type(&mut self,c: char) -> Result<TokenType, LexerError> {
         match c {
-            '(' => Some(TokenType::Punctuation { raw: c, kind: PunctuationKind::Open(self.push_balance(&c)) }),
-            ')' => Some(TokenType::Punctuation { raw: c, kind: PunctuationKind::Close(self.pop_balance(&c))}),
+            '(' | '[' => Ok(TokenType::Punctuation { raw: c, kind: PunctuationKind::Open(self.push_symbol(&c)) }),
+            ')' | ']' => Ok(TokenType::Punctuation { raw: c, kind: PunctuationKind::Close(self.pop_symbol(&c)?)}),
+            '0' ..= '9' => self.parse_number(c),
+            _ => Err(LexerError::UnknownSymbol { symbol: c.to_string() })
+        }
+    }
+
+    fn consume_char(&mut self ) -> Option<char> {
+        match self.chars.next() {
+            Some(c) => {
+                self.cur_col += 1;
+                if c == '\n' {
+                    self.cur_line += 1;
+                    self.cur_col = 1;
+                }
+                self.codepoint_offset += 1;
+
+                return Some(c);
+            },
+            None => None
+        }
+    }
+
+    fn skip_whitespace(&mut self) {
+        while let Some(c) = self.chars.peek() {
+            if !c.is_whitespace() {
+                break;
+            }
+            self.consume_char();
+        }
+    }
+
+    pub fn next_token(&mut self) -> Result<TokenType, LexerError> {
+        self.skip_whitespace();
+
+        if let Some(c) = self.consume_char() {
+            self.transform_to_type(c)
+        } else {
+            Ok(TokenType::EOF)
         }
     }
 }
