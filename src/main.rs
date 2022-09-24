@@ -1,9 +1,9 @@
-pub mod lexer;
+extern crate unitecore;    
 
-use lexer::lexer::*;
+use unitecore::lexer::*;
 
 fn main() {
-    let mut lexer = Lexer::new("");
+    let mut lexer = Lexer::new("2.2 2.2e92 .2");
 
     loop {
         match lexer.next_token() {

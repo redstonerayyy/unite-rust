@@ -1,85 +1,4 @@
-use std::io;
-
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum LexerError {
-    #[error("IO Error")]
-    FileIO(#[from] io::Error),
-
-    #[error("Was expecting {expected:?}, found {found:?}")]
-    MissingExpectedSymbol {
-        expected: TokenType,
-        found: Token
-    },
-
-    #[error("Can't find opening symbol for {symbol:?}")]
-    MisbalancedSymbol {
-        symbol: char,
-        open: char
-    },
-
-    #[error("Unkwon Symbol")]
-    UnknownSymbol {
-        symbol: String,
-    }
-}
-
-pub type Token = TokenType;
-
-// pub struct Punctuation {
-//     pub raw: char,
-//     pub kind: PunctuationKind
-// }
-
-
-#[derive(Debug)]
-pub enum TokenType {
-    /* End of token Stream */
-    EOF,
-
-    /* Punctuation like , ( [ */
-    Punctuation{raw: char, kind: PunctuationKind},
-
-    /* Operators e. g. '*', '->' */
-    Operators(String),
-
-    /* A sequence of characters */
-    Identifier(String),
-
-    /* A single character 'a' => unicode codepoint (32bit). */
-    Char(char),
-
-    /* algebraic data type */
-    // Numeric{raw: String, base: NumericBaseKind, postfix: NumberPostfixKind, form: NumericForm},
-    Numeric(String),
-
-    /* for errors */
-    Unknown(char),
-}
-
-#[derive(Debug)]
-pub enum PunctuationKind {
-    /* '(', '[', '{' */
-    Open(BalancingDepthType),
-    /* ')', ']', '}' */
-    Close(BalancingDepthType),
-    /* ',', ';' */
-    Separator
-}
-
-type BalancingDepthType = i32;
-
-pub struct Lexer<'a> {
-    /* human readable */
-    pub cur_line: usize,
-    pub cur_col: usize,
-    /* raw format in 'codepoints' */
-    pub codepoint_offset: usize,
-
-    chars: std::iter::Peekable<std::str::Chars<'a>>,
-    balancing_state: std::collections::HashMap<char, i32>,
-}
+use crate::lexer::*;
 
 impl<'a> Lexer<'a> {
     pub fn new(chars: &'a str, ) -> Lexer<'a> {
@@ -129,15 +48,83 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn consume_digit(&mut self, raw: &String, for_radix: u32) -> Result<char, LexerError> {
+        match self.chars.next() {
+            // maybe improve
+            None => {
+                println!("3");
+                Err(LexerError::NumericLiteralInvalidChar { raw: raw.to_string() })
+            },
+            Some(c) if !c.is_digit(for_radix) => {
+                println!("2");
+                Err(LexerError::NumericLiteralInvalidChar { raw: raw.to_string() })
+            },
+            Some(c) => Ok(c)
+        }
+    }
+
     fn parse_number(&mut self, start: char) -> Result<TokenType, LexerError> {
-        
+        let mut seen_dot = false;
+        let mut seen_exp = false;
+        let mut num = start.to_string();
+        let radix = 10;
+
+        if start == '.' {
+            num.push(self.consume_digit(&num, 10)?);
+            seen_dot = true;
+        }
+
+        loop {
+            // types of numbers: 1020, .1203, 1.234, 1e+3 1.23e-3 
+            match self.chars.peek() {
+                Some(c) if *c == '.' && !seen_dot && !seen_exp => {
+                    num.push(*c);
+                    self.consume_char();
+                    seen_dot = true;  
+                },
+                Some(c) if (*c == 'e' || *c == 'E') && !seen_exp => {
+                    num.push(*c);
+                    self.consume_char();
+                    seen_exp = true;
+                    
+                     let exp_radix = 10;
+
+                    match self.chars.peek() {
+                        Some(c) if *c == '+' || *c == '-' => {
+                            num.push(*c);
+                            self.consume_char();
+                        }
+                        _ => {}
+                    }
+                    
+                    num.push(self.consume_digit(&num, exp_radix)?);
+                },
+                Some(c) if c.is_digit(radix) => {
+                    num.push(*c);
+                    self.consume_char();
+                    
+                },
+                Some(c) if c.is_ascii_alphabetic() || c.is_digit(10) => {
+                    // is_digit(10) because maybe radix is != 10, so fail on 4 if its binary
+                    num.push(*c);
+                    println!("1");
+                    break Err(LexerError::NumericLiteralInvalidChar { raw: num })
+                },
+                _ => {
+                    // exit
+                    break Ok(TokenType::Numeric { raw: num, hint: if seen_dot || seen_exp { NumericHint::FloatingPoint} else { NumericHint::Integer} });
+                }
+            }
+        }
+
+
     }
 
     fn transform_to_type(&mut self,c: char) -> Result<TokenType, LexerError> {
         match c {
             '(' | '[' => Ok(TokenType::Punctuation { raw: c, kind: PunctuationKind::Open(self.push_symbol(&c)) }),
             ')' | ']' => Ok(TokenType::Punctuation { raw: c, kind: PunctuationKind::Close(self.pop_symbol(&c)?)}),
-            '0' ..= '9' => self.parse_number(c),
+            '0' ..= '9' | '.'  => self.parse_number(c),
             _ => Err(LexerError::UnknownSymbol { symbol: c.to_string() })
         }
     }
